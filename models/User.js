@@ -41,11 +41,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  role: {
-    type: String,
-    enum: ['user', 'admin'],
-    default: 'user'
-  },
+
   isActive: {
     type: Boolean,
     default: true
@@ -107,10 +103,7 @@ userSchema.statics.findByEmailOrUsername = function(identifier) {
   });
 };
 
-// Check if user is admin
-userSchema.methods.isAdmin = function() {
-  return this.role === 'admin';
-};
+
 
 // Deactivate user (soft delete)
 userSchema.methods.deactivate = function() {

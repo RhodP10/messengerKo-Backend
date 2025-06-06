@@ -5,6 +5,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import path from 'path';
 
 // Import configurations and middleware
 import connectDB from './config/database.js';
@@ -16,7 +17,11 @@ import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import conversationRoutes from './routes/conversations.js';
 import messageRoutes from './routes/messages.js';
+import groupMembersRoutes from './routes/groupMembers.js';
 import adminRoutes from './routes/admin.js';
+import adminAuthRoutes from './routes/adminAuth.js';
+import adminUsersRoutes from './routes/adminUsers.js';
+import adminConversationsRoutes from './routes/adminConversations.js';
 
 // Load environment variables
 dotenv.config();
@@ -25,10 +30,13 @@ dotenv.config();
 const app = express();
 const server = createServer(app);
 
+// Trust proxy for Render.com deployment
+app.set('trust proxy', 1);
+
 // Initialize Socket.io
 const io = new Server(server, {
   cors: {
-    origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5174'],
+    origin: true,
     methods: ['GET', 'POST'],
     credentials: true
   }
@@ -44,29 +52,30 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
     },
   },
 }));
 
-// Rate limiting
+// Rate limiting - More lenient for development
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 1000, // Increased limit for testing
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again later.'
   },
   standardHeaders: true,
   legacyHeaders: false,
+  trustProxy: true, // Trust proxy headers
 });
 
 app.use('/api/', limiter);
 
-// CORS middleware
+// CORS middleware - Allow all origins for now
 app.use(cors({
-  origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:5174'],
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -86,11 +95,19 @@ app.get('/health', (req, res) => {
   });
 });
 
+
+
+
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/conversations', conversationRoutes);
+app.use('/api/conversations', groupMembersRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/admin/auth', adminAuthRoutes);
+app.use('/api/admin/users', adminUsersRoutes);
+app.use('/api/admin/conversations', adminConversationsRoutes);
 app.use('/api/admin', adminRoutes);
 
 // 404 handler for API routes
@@ -121,7 +138,7 @@ io.on('connection', (socket) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;  // Render.com uses port 10000
 
 server.listen(PORT, () => {
   console.log(`

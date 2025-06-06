@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import Admin from '../models/Admin.js';
 import Conversation from '../models/Conversation.js';
 import Message from '../models/Message.js';
 
@@ -76,15 +77,16 @@ export const getAllUsers = async (req, res) => {
       query.isActive = status === 'active';
     }
 
-    if (role !== 'all') {
-      query.role = role;
-    }
+    // Remove role filter since users don't have roles anymore
+    // if (role !== 'all') {
+    //   query.role = role;
+    // }
 
     const skip = (page - 1) * limit;
 
     const [users, totalUsers] = await Promise.all([
       User.find(query)
-        .select('username email role isActive isOnline lastSeen createdAt')
+        .select('username email isActive isOnline lastSeen createdAt')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -121,7 +123,7 @@ export const getUserDetails = async (req, res) => {
     const { userId } = req.params;
 
     const user = await User.findById(userId)
-      .select('username email role isActive isOnline lastSeen createdAt');
+      .select('username email isActive isOnline lastSeen createdAt');
 
     if (!user) {
       return res.status(404).json({
@@ -236,13 +238,8 @@ export const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Prevent admin from deleting themselves
-    if (userId === req.user._id.toString()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete your own account'
-      });
-    }
+    // Note: This check is for user deletion, admin context updated
+    // Admins are now in separate table
 
     const user = await User.findById(userId);
     if (!user) {
@@ -252,13 +249,7 @@ export const deleteUser = async (req, res) => {
       });
     }
 
-    // Prevent deleting other admins
-    if (user.isAdmin()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete admin accounts'
-      });
-    }
+    // Note: Users no longer have admin roles, so this check is removed
 
     // Delete user's messages
     await Message.deleteMany({ senderId: userId });
@@ -284,6 +275,175 @@ export const deleteUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to delete user'
+    });
+  }
+};
+
+// Get all admins
+export const getAllAdmins = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || '';
+    const role = req.query.role || 'all'; // all, super_admin, admin, moderator
+
+    // Build query
+    const query = {};
+
+    if (search) {
+      query.$or = [
+        { username: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    if (role !== 'all') {
+      query.role = role;
+    }
+
+    const skip = (page - 1) * limit;
+
+    const [admins, totalAdmins] = await Promise.all([
+      Admin.find(query)
+        .select('username email firstName lastName role isActive lastLogin createdAt createdBy')
+        .populate('createdBy', 'username email firstName lastName')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Admin.countDocuments(query)
+    ]);
+
+    const totalPages = Math.ceil(totalAdmins / limit);
+
+    res.json({
+      success: true,
+      data: {
+        admins,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalAdmins,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get all admins error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch admins'
+    });
+  }
+};
+
+// Get admin details
+export const getAdminDetails = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+
+    const admin = await Admin.findById(adminId)
+      .select('username email firstName lastName role isActive lastLogin createdAt permissions')
+      .populate('createdBy', 'username email firstName lastName');
+
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        admin
+      }
+    });
+  } catch (error) {
+    console.error('Get admin details error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch admin details'
+    });
+  }
+};
+
+// Deactivate admin
+export const deactivateAdmin = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+
+    // Prevent self-deactivation
+    if (adminId === req.admin._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot deactivate your own account'
+      });
+    }
+
+    const admin = await Admin.findById(adminId);
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    // Only super_admin can deactivate other super_admins
+    if (admin.role === 'super_admin' && req.admin.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only super administrators can deactivate super admin accounts'
+      });
+    }
+
+    await admin.deactivate();
+
+    res.json({
+      success: true,
+      message: 'Admin account deactivated successfully',
+      data: {
+        admin: admin.toJSON()
+      }
+    });
+  } catch (error) {
+    console.error('Deactivate admin error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to deactivate admin'
+    });
+  }
+};
+
+// Reactivate admin
+export const reactivateAdmin = async (req, res) => {
+  try {
+    const { adminId } = req.params;
+
+    const admin = await Admin.findById(adminId);
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: 'Admin not found'
+      });
+    }
+
+    await admin.reactivate();
+
+    res.json({
+      success: true,
+      message: 'Admin account reactivated successfully',
+      data: {
+        admin: admin.toJSON()
+      }
+    });
+  } catch (error) {
+    console.error('Reactivate admin error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reactivate admin'
     });
   }
 };

@@ -134,3 +134,59 @@ export const validatePasswordChange = [
     
   handleValidationErrors
 ];
+
+// Admin login validation
+export const validateAdminLogin = [
+  body('identifier')
+    .trim()
+    .notEmpty()
+    .withMessage('Email or username is required'),
+
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required'),
+
+  handleValidationErrors
+];
+
+// Admin registration validation
+export const validateAdminRegister = [
+  body('username')
+    .trim()
+    .isLength({ min: 2, max: 30 })
+    .withMessage('Username must be between 2 and 30 characters')
+    .matches(/^[a-zA-Z0-9_-]+$/)
+    .withMessage('Username can only contain letters, numbers, underscores, and hyphens'),
+
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email address'),
+
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/)
+    .withMessage('Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character'),
+
+  body('firstName')
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('First name must be between 1 and 50 characters')
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage('First name can only contain letters and spaces'),
+
+  body('lastName')
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage('Last name must be between 1 and 50 characters')
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage('Last name can only contain letters and spaces'),
+
+  body('role')
+    .optional()
+    .isIn(['super_admin', 'admin', 'moderator'])
+    .withMessage('Role must be super_admin, admin, or moderator'),
+
+  handleValidationErrors
+];

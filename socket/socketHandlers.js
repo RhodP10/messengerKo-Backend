@@ -109,6 +109,11 @@ export const handleConnection = (io, socket) => {
       }
 
       // Send message to all participants in the conversation
+      console.log(`📡 Broadcasting message to conversation_${conversationId}:`, {
+        messageId: message._id,
+        content: message.content,
+        sender: message.sender.username
+      });
       io.to(`conversation_${conversationId}`).emit('new_message', {
         message: message.toJSON()
       });

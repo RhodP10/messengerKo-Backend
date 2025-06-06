@@ -1,6 +1,9 @@
 import express from 'express';
+import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import Admin from '../models/Admin.js';
 import { generateToken, authenticateToken } from '../middleware/auth.js';
+import { generateAdminToken } from '../middleware/adminAuth.js';
 import { validateRegister, validateLogin } from '../middleware/validation.js';
 
 const router = express.Router();
@@ -60,50 +63,121 @@ router.post('/register', validateRegister, async (req, res) => {
 });
 
 // @route   POST /api/auth/login
-// @desc    Login user
+// @desc    Login user or admin (unified login)
 // @access  Public
 router.post('/login', validateLogin, async (req, res) => {
   try {
     const { identifier, password } = req.body;
 
-    // Find user by email or username
+    console.log('🔐 UNIFIED LOGIN ATTEMPT:');
+    console.log('📧 Identifier:', identifier);
+    console.log('🔑 Password length:', password?.length);
+
+    // First, try to find admin
+    const admin = await Admin.findByEmailOrUsername(identifier);
+    if (admin) {
+      console.log('👑 Admin found, checking admin credentials...');
+
+      // Check if admin account is active
+      if (!admin.isActive) {
+        console.log('❌ Admin account inactive');
+        return res.status(403).json({
+          success: false,
+          message: 'Account has been deactivated. Please contact administrator.'
+        });
+      }
+
+      // Check if admin account is locked
+      if (admin.isLocked) {
+        console.log('❌ Admin account locked');
+        return res.status(423).json({
+          success: false,
+          message: 'Account is temporarily locked due to too many failed login attempts.'
+        });
+      }
+
+      // Check admin password
+      const isAdminMatch = await admin.comparePassword(password);
+      console.log('🔐 Admin password match:', isAdminMatch);
+
+      if (isAdminMatch) {
+        console.log('✅ ADMIN LOGIN SUCCESSFUL');
+        // Reset login attempts on successful login
+        await admin.resetLoginAttempts();
+
+        // Generate admin token
+        const token = generateAdminToken(admin._id);
+
+        return res.json({
+          success: true,
+          message: 'Admin login successful',
+          data: {
+            user: {
+              ...admin.toJSON(),
+              userType: 'admin'
+            },
+            token,
+            userType: 'admin'
+          }
+        });
+      } else {
+        console.log('❌ Admin password mismatch');
+        // Increment login attempts for admin
+        await admin.incLoginAttempts();
+      }
+    }
+
+    // If not admin or admin password failed, try regular user
+    console.log('👤 Checking regular user credentials...');
     const user = await User.findByEmailOrUsername(identifier);
     if (!user) {
+      console.log('❌ No user or admin found');
       return res.status(400).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
+    console.log('👤 User found, checking user credentials...');
+
     // Check if user account is active
     if (!user.isActive) {
+      console.log('❌ User account inactive');
       return res.status(403).json({
         success: false,
         message: 'Account has been deactivated. Please contact administrator.'
       });
     }
 
-    // Check password
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
+    // Check user password
+    const isUserMatch = await user.comparePassword(password);
+    console.log('🔐 User password match:', isUserMatch);
+
+    if (!isUserMatch) {
+      console.log('❌ User password mismatch');
       return res.status(400).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    // Update online status
+    console.log('✅ USER LOGIN SUCCESSFUL');
+    // Update online status for regular user
     await user.setOnlineStatus(true);
 
-    // Generate token
+    // Generate regular user token
     const token = generateToken(user._id);
 
     res.json({
       success: true,
-      message: 'Login successful',
+      message: 'User login successful',
       data: {
-        user: user.toJSON(),
-        token
+        user: {
+          ...user.toJSON(),
+          userType: 'user'
+        },
+        token,
+        userType: 'user'
       }
     });
   } catch (error) {
@@ -137,18 +211,95 @@ router.post('/logout', authenticateToken, async (req, res) => {
 });
 
 // @route   GET /api/auth/me
-// @desc    Get current user
+// @desc    Get current user or admin (unified)
 // @access  Private
-router.get('/me', authenticateToken, async (req, res) => {
+router.get('/me', async (req, res) => {
   try {
-    res.json({
-      success: true,
-      data: {
-        user: req.user.toJSON()
+    const authHeader = req.headers.authorization;
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Access token required'
+      });
+    }
+
+    console.log('🔍 /me endpoint: Checking token...');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log('🎫 /me endpoint: Decoded token:', decoded);
+
+    // Check if it's an admin token
+    if (decoded.type === 'admin' && decoded.adminId) {
+      console.log('👑 /me endpoint: Admin token detected');
+      const admin = await Admin.findById(decoded.adminId);
+
+      if (!admin || !admin.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid admin token'
+        });
       }
+
+      console.log('✅ /me endpoint: Admin found and active');
+      return res.json({
+        success: true,
+        data: {
+          user: {
+            ...admin.toJSON(),
+            userType: 'admin'
+          }
+        }
+      });
+    }
+
+    // Check if it's a regular user token
+    if (decoded.userId) {
+      console.log('👤 /me endpoint: User token detected');
+      const user = await User.findById(decoded.userId).select('-password');
+
+      if (!user || !user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid user token'
+        });
+      }
+
+      console.log('✅ /me endpoint: User found and active');
+      return res.json({
+        success: true,
+        data: {
+          user: {
+            ...user.toJSON(),
+            userType: 'user'
+          }
+        }
+      });
+    }
+
+    // Invalid token structure
+    return res.status(401).json({
+      success: false,
+      message: 'Invalid token structure'
     });
+
   } catch (error) {
-    console.error('Get user error:', error);
+    console.error('❌ /me endpoint error:', error);
+
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token'
+      });
+    }
+
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        message: 'Token expired'
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: 'Server error getting user data'
